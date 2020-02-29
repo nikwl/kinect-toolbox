@@ -1,7 +1,6 @@
 # To use, need to run this first
 # export LIBFREENECT2_INSTALL_PREFIX=~/freenect2
 # export LD_LIBRARY_PATH=$HOME/freenect2/lib:$LD_LIBRARY_PATH
-# export PYTHONPATH=$PYTHONPATH:~/Documents/Dev/venvs/libs 
 
 import sys
 import os
@@ -247,8 +246,27 @@ class Kinect():
                 return ptcld  
 
     def get_perspective_depth(self, principal_point, view_vector, focal_lengths, roi=None, auto_adjust=True):
+        '''
+            get_perspective_depth: Generates a simulated depth map from the input location, orientation 
+                and fov. Currently the depth map uses orthographic perspective. Depth map will appear as
+                if the camera was moved from the downward vector (0, 0, 1) to the target vector, ie the
+                up and down orientation will follow the minimum rotation between the vectors.  
+            ARGUMENTS:
+                principal_point: (x, y, z)
+                    Location of the camera. 
+                view_vector: (x, y, z)
+                    Camera viewing plane.
+                focal_lengths: (x, y, z)
+                    Size of image plane.
+                roi: (x, y, z)
+                    Crop the point cloud.
+                auto_adjust: (x, y, z)
+                    Auto change the pricipal point to match the roi. 
+        '''
+        # View vector has to be normalized
         view_vector = unit_vector(view_vector)
 
+        # Get the source point cloud
         ptcld = self.get_ptcld(roi=roi)
         ptcld_shape = ptcld.shape
 
