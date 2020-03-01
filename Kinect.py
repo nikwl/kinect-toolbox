@@ -245,24 +245,25 @@ class Kinect():
 
                 return ptcld  
 
-    def get_perspective_depth(self, principal_point, view_vector, focal_lengths, roi=None, auto_adjust=True):
+    def get_perspective_depth(self, principal_point, view_vector, focal_lengths, roi=None, auto_adjust=False):
         '''
             get_perspective_depth: Generates a simulated depth map from the input location, orientation 
                 and fov. Currently the depth map uses orthographic perspective. Depth map will appear as
-                if the camera was moved from the downward vector (0, 0, 1) to the target vector, ie the
+                if the camera was moved from the downward vector (0, 0, -1) to the target vector, ie the
                 up and down orientation will follow the minimum rotation between the vectors.  
             ARGUMENTS:
                 principal_point: (x, y, z)
-                    Location of the camera. 
+                    Principal point of the virtual camera.
                 view_vector: (x, y, z)
-                    Camera viewing plane.
+                    Normal vector of the camera viewing plane (sign matters).
                 focal_lengths: (x, y, z)
-                    Size of image plane.
+                    Size of viewing plane (mm).
                 roi: (x, y, z)
-                    Crop the point cloud.
+                    If enabled, will crop the point cloud before rendering the depth image. 
                 auto_adjust: (x, y, z)
-                    Auto change the pricipal point to match the roi. 
+                    If enabled, will change the pricipal point and fov to give an ideal view of the roi. 
         '''
+
         # View vector has to be normalized
         view_vector = unit_vector(view_vector)
 
@@ -276,8 +277,8 @@ class Kinect():
         xmin, xmax = -int(fx/2), fx - int(fx/2)
 
         # Auto adjust places the principal point 50 mm above the center of the point cloud. 
-        if (auto_adjust and roi):
-            principal_point = [vv + (-cp * 50) for vv, cp in zip(view_vector,get_image_center_point(ptcld))]
+        if (auto_adjust and (roi is not None)):
+            principal_point = [vv + (-cp * 50) for vv, cp in zip(view_vector, get_image_center_point(ptcld))]
 
         # Vectorize point cloud
         ptcld = ptcld.reshape(ptcld_shape[1] * ptcld_shape[0], 3)
@@ -286,27 +287,33 @@ class Kinect():
         vector_cloud = np.repeat(np.expand_dims(np.asarray(principal_point), axis=0), (ptcld_shape[1] * ptcld_shape[0]), axis=0)
         vector_cloud = np.subtract(ptcld, vector_cloud)
 
+        # In order to get the vector projections in x and y, align the view vector (and points) with the z axis 
+        new_view_vector = [0, 0, -1]
+        d = np.dot(new_view_vector, view_vector)
+
+        # Sometimes the vectors are already aligned
+        if (d == -1):
+            valid_points = vector_cloud[:, 2] >= 0.0
+        elif (d == 1):
+            valid_points = vector_cloud[:, 2] <= 0.0
+        else:
+            # Sometimes they aren't and we need to rotate all the points
+            angle = math.acos(np.dot(view_vector, new_view_vector))
+            axis = np.cross(view_vector, new_view_vector)
+            q = Quaternion(axis=axis, angle=angle)
+            vector_cloud = np.transpose(np.matmul(np.array(q.rotation_matrix), np.transpose(vector_cloud)))
+            valid_points = vector_cloud[:, 2] <= 0.0
+
         # Discard points on the wrong side of the camera
-        vector_side = np.apply_along_axis(lambda v: np.dot(view_vector, v), 1, vector_cloud)
-        vector_cloud = vector_cloud[vector_side > 0.0, :]
+        vector_cloud = vector_cloud[valid_points, :]
 
         # Did this get rid of all the points?
         bins = np.matrix(np.zeros((focal_lengths)))
-        if (len(vector_cloud) == 0):
+        if (vector_cloud.shape[0] == 0):
             return bins
 
-        # In order to get the vector projections in x and y, align the view vector (and points) with the z axis 
-        new_view_vector = [0, 0, 1]
-        if (abs(np.dot(new_view_vector, view_vector)) != 1):
-            angle = math.acos(np.dot(view_vector, new_view_vector))
-            axis = np.cross(new_view_vector, view_vector)
-            q = Quaternion(axis=axis, angle=angle)
-            vector_cloud = np.transpose(np.matmul(np.array(q.rotation_matrix), np.transpose(vector_cloud)))
-        else:
-            new_view_vector = view_vector
-
         # Get the corresponding vector distances
-        vector_dists = np.apply_along_axis(np.linalg.norm, 1, vector_cloud)
+        vector_dists = np.apply_along_axis(lambda v: math.sqrt(np.dot(v, v)), 1, vector_cloud)
 
         # Create the image
         for i, v in enumerate(vector_cloud):
@@ -314,9 +321,9 @@ class Kinect():
             [y, x] = [int(q) for q in v[:-1]]
             if (x > xmin) and (x <= xmax) and (y > ymin) and (y <= ymax):
                 if (bins[y, x] > 0):
-                    bins[(-y) - ymin,  (-x) - xmin] = min(bins[y, x], vector_dists[i])
+                    bins[(-y) + ymin,  (-x) + xmin] = min(bins[y, x], vector_dists[i])
                 else:
-                    bins[(-y) - ymin,  (-x) - xmin] = vector_dists[i]
+                    bins[(-y) + ymin,  (-x) + xmin] = vector_dists[i]
                 
         # Apply a blur to simulate a depth map
         blur_amnt = int(min(focal_lengths) / 200)
@@ -424,7 +431,7 @@ class Kinect():
             pt[:, ax1] = hyp * np.cos(new_angle) # Calculate the rotated coordinate for this axis.
             pt[:, ax2] = hyp * np.sin(new_angle) # Calculate the rotated coordinate for this axis.
 
-        rotatePoints(1, 2, CameraPosition['roll']) #rotate on the Y&Z plane # Usually disabled because most tripods don't roll. If an Inertial Nav Unit is available this could be used)
+        rotatePoints(1, 2, camera_position['roll']) #rotate on the Y&Z plane # Usually disabled because most tripods don't roll. If an Inertial Nav Unit is available this could be used)
         rotatePoints(0, 2, camera_position['elevation']) #rotate on the X&Z plane
         rotatePoints(0, 1, camera_position['azimuth']) #rotate on the X&Y
 
