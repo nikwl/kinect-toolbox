@@ -13,6 +13,8 @@ from .KinectIm import KinectIm
 
 from pyquaternion import Quaternion
 
+from scipy.interpolate import griddata
+
 from pylibfreenect2 import Freenect2, SyncMultiFrameListener
 from pylibfreenect2 import FrameType, Registration, Frame
 
@@ -245,7 +247,7 @@ class Kinect():
 
                 return ptcld  
 
-    def get_perspective_depth(self, principal_point, view_vector, focal_lengths, roi=None, auto_adjust=False):
+    def get_perspective_depth(self, principal_point, view_vector, fov, roi=None, auto_adjust=False):
         '''
             get_perspective_depth: Generates a simulated depth map from the input location, orientation 
                 and fov. Currently the depth map uses orthographic perspective. Depth map will appear as
@@ -256,7 +258,7 @@ class Kinect():
                     Principal point of the virtual camera.
                 view_vector: (x, y, z)
                     Normal vector of the camera viewing plane (sign matters).
-                focal_lengths: (x, y, z)
+                fov: (x, y, z)
                     Size of viewing plane (mm).
                 roi: (x, y, z)
                     If enabled, will crop the point cloud before rendering the depth image. 
@@ -271,14 +273,14 @@ class Kinect():
         ptcld = self.get_ptcld(roi=roi)
         ptcld_shape = ptcld.shape
 
-        # Extract size of resulting image
-        (fy, fx) = focal_lengths
-        ymin, ymax = -int(fy/2), fy - int(fy/2)
-        xmin, xmax = -int(fx/2), fx - int(fx/2)
-
         # Auto adjust places the principal point 50 mm above the center of the point cloud. 
-        if (auto_adjust and (roi is not None)):
-            principal_point = [vv + (-cp * 50) for vv, cp in zip(view_vector, get_image_center_point(ptcld))]
+        if (auto_adjust[0] and (roi is not None)):
+            principal_point = [(abs(vv) * 50) + cp for vv, cp in zip(view_vector, get_image_center_point(ptcld))]
+
+        # Extract size of resulting image
+        (yfov, xfov) = fov
+        ymin, ymax = -int(yfov/2), yfov - int(yfov/2)
+        xmin, xmax = -int(xfov/2), xfov - int(xfov/2)
 
         # Vectorize point cloud
         ptcld = ptcld.reshape(ptcld_shape[1] * ptcld_shape[0], 3)
@@ -294,42 +296,75 @@ class Kinect():
         # Sometimes the vectors are already aligned
         if (d == -1):
             valid_points = vector_cloud[:, 2] >= 0.0
+            rotm = jnp.identity(3)
         elif (d == 1):
             valid_points = vector_cloud[:, 2] <= 0.0
+            rotm = np.identity(3)
         else:
             # Sometimes they aren't and we need to rotate all the points
             angle = math.acos(np.dot(view_vector, new_view_vector))
             axis = np.cross(view_vector, new_view_vector)
             q = Quaternion(axis=axis, angle=angle)
-            vector_cloud = np.transpose(np.matmul(np.array(q.rotation_matrix), np.transpose(vector_cloud)))
+            rotm = q.rotation_matrix
+            vector_cloud = np.transpose(np.matmul(np.array(rotm), np.transpose(vector_cloud)))
             valid_points = vector_cloud[:, 2] <= 0.0
-
         # Discard points on the wrong side of the camera
         vector_cloud = vector_cloud[valid_points, :]
 
+        # This will resize the fov, if desired
+        if (auto_adjust[1] and (roi is not None)):
+            min_pt = principal_point + vector_cloud[0,:]
+            (yfov, xfov) = int(2*abs(principal_point[0] - min_pt[0])), int(2*abs(principal_point[1] - min_pt[1]))
+            fov = [yfov, xfov]
+            ymin, ymax = -int(yfov/2), yfov - int(yfov/2)
+            xmin, xmax = -int(xfov/2), xfov - int(xfov/2)
+
         # Did this get rid of all the points?
-        bins = np.matrix(np.zeros((focal_lengths)))
         if (vector_cloud.shape[0] == 0):
-            return bins
+            return np.matrix(np.zeros((fov))), np.linalg.inv(rotm), principal_point
 
         # Get the corresponding vector distances
         vector_dists = np.apply_along_axis(lambda v: math.sqrt(np.dot(v, v)), 1, vector_cloud)
 
         # Create the image
+        points = np.zeros((yfov*xfov,2))
+        values = np.zeros((yfov*xfov,1))
         for i, v in enumerate(vector_cloud):
-            # This order of coordinates will make the image appear upside down when viewing from top down
-            [y, x] = [int(q) for q in v[:-1]]
-            if (x > xmin) and (x <= xmax) and (y > ymin) and (y <= ymax):
-                if (bins[y, x] > 0):
-                    bins[(-y) + ymin,  (-x) + xmin] = min(bins[y, x], vector_dists[i])
-                else:
-                    bins[(-y) + ymin,  (-x) + xmin] = vector_dists[i]
-                
-        # Apply a blur to simulate a depth map
-        blur_amnt = int(min(focal_lengths) / 200)
-        bins = cv2.blur(bins, (blur_amnt, blur_amnt))
+            [y, x] = [int(-q) for q in v[:-1]]
+            if (x >= xmin) and (x < xmax) and (y >= ymin) and (y < ymax):
+                [y, x] = (y) - ymin,  (x) - xmin
 
-        return bins
+                pt_idx = np.ravel_multi_index((y, x), fov)
+                points[pt_idx, :] = [int(y), int(x)]
+                if (values[pt_idx, :] > 0):
+                    values[pt_idx, :] = min(vector_dists[i], values[pt_idx, :])
+                else:
+                    values[pt_idx, :] = vector_dists[i]
+        points = points[values[:,0] > 0.0, :]
+        values = values[values[:,0] > 0.0, :]
+
+        # Generates the sparse depth map
+        #bins = np.zeros((fov))
+        #for i,p in enumerate(points):
+        #    bins[int(p[0]), int(p[1])] = values[i]
+                    
+        if (points.shape[0] == 0):
+            return np.matrix(np.zeros((fov))), np.linalg.inv(rotm), principal_point
+        
+        #values = values
+    
+        grid_y, grid_x  = np.mgrid[0:xfov, 0:yfov]
+        grid = griddata(points, values, (grid_x, grid_y), method='nearest', fill_value=np.max(values))
+        grid = np.reshape(np.nan_to_num(grid.T), (xfov, yfov, 1))
+
+        # Apply a blur to simulate a depth map
+        #blur_amnt = int(math.ceil((min(fov) / 50)))
+        blur_amnt = 5
+        if (blur_amnt > 1):
+            grid = cv2.blur(grid, (blur_amnt, blur_amnt))
+            grid = cv2.GaussianBlur(grid, (blur_amnt, blur_amnt),0)
+        
+        return grid, np.linalg.inv(rotm), principal_point
 
     def new_frame(self, shape):
         '''
