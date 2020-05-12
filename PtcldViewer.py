@@ -6,7 +6,7 @@ import sys
 
 from .Kinect import Kinect
 
-class Visualizer(object):
+class PtcldViewer(object):
     def __init__(self, roi=False):
         #QT app
         self.app = QtGui.QApplication([])

@@ -9,14 +9,14 @@ import json
 import math
 import numpy as np
 
-from .KinectIm import KinectIm
-
 from pyquaternion import Quaternion
 
 from scipy.interpolate import griddata
 
 from pylibfreenect2 import Freenect2, SyncMultiFrameListener
 from pylibfreenect2 import FrameType, Registration, Frame
+
+from .KinectIm import KinectIm
 
 try:
     from pylibfreenect2 import OpenGLPacketPipeline
@@ -176,10 +176,10 @@ class Kinect():
                 self.listener.release(frames)
 
                 # Get point cloud 
-                ptcld = self.depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
+                ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
 
                 # Adujust point cloud based on real world coordinates
-                ptcld = self.applyCameraMatrixOrientation(ptcld, self.CameraPosition)
+                ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
 
                 # Reshape to correct size
                 ptcld = ptcld.reshape(DEPTH_SHAPE[1], DEPTH_SHAPE[0], 3)
@@ -225,10 +225,10 @@ class Kinect():
                 self.listener.release(frames)
                 
                 # Get point cloud 
-                ptcld = self.depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
+                ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
 
                 # Adujust point cloud based on real world coordinates
-                ptcld = self.applyCameraMatrixOrientation(ptcld, self.CameraPosition)
+                ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
 
                 # Reshape to correct size
                 ptcld = ptcld.reshape(DEPTH_SHAPE[1], DEPTH_SHAPE[0], 3)
@@ -366,6 +366,61 @@ class Kinect():
         
         return grid, np.linalg.inv(rotm), principal_point
 
+    def get_roi(self, frame_type=None):
+        '''
+            get_roi: When called, opens a cv2 select window and allows the user to 
+                select an roi on the input frame type. Can be called with multiple 
+                frame types but will only allow the user to select an roi on the 
+                first one.
+            ARGUMENTS:
+                frame_type: ([KinectIm])
+                    A list of frame types.
+        '''
+        frame = self.get_frame(frame_type)[0]
+        [x, y, w, h] = cv2.selectROI(frame, True, False)
+        cv2.destroyAllWindows()
+        return [x, y, w, h]
+
+      def record(self, filename=None):
+        '''
+            record: Records a video from the raw color kinect video. Video
+                is saved as a 1080p avi. 
+            ARGUMENTS:
+                filename: (str)
+                    Name to save the video with. 
+        '''
+        from datetime import datetime
+
+        # Create the filename 
+        now = datetime.now()
+        if (filename is None):
+            filename = 'video'+now.strftime("%m_%d_%Y_%H_%M_%S")+'.avi'
+
+        # Make sure the file extension is correct
+        _, ext = os.path.splitext(filename)
+        if (ext != '.avi'):
+            print('Only supported recording type is avi.')
+            exit(-1)
+
+        # Create the video writer
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter(filename, fourcc, 25, COLOR_SHAPE)
+
+        # Record. On keyboard interrupt close and save. 
+        try:
+            while True:
+                frame = self.get_frame([KinectIm.RAW_COLOR])[0]
+                frame = frame[0][:,:,:3]
+                cv2.imshow("KinectVideo", frame)
+                out.write(frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            out.release()
+            cv2.destroyAllWindows()
+        except KeyboardInterrupt:
+            out.release()
+            cv2.destroyAllWindows()
+            
     def new_frame(self, shape):
         '''
             new_frame: Return a pylibfreenect2 frame with the dimensions specified.
@@ -413,22 +468,7 @@ class Kinect():
         registered = np.copy(registered.asarray(np.uint8))
         return registered, undistorted
 
-    def get_roi(self, frame_type=None):
-        '''
-            get_roi: When called, opens a cv2 select window and allows the user to 
-                select an roi on the input frame type. Can be called with multiple 
-                frame types but will only allow the user to select an roi on the 
-                first one.
-            ARGUMENTS:
-                frame_type: ([KinectIm])
-                    A list of frame types.
-        '''
-        frame = self.get_frame(frame_type)[0]
-        [x, y, w, h] = cv2.selectROI(frame, True, False)
-        cv2.destroyAllWindows()
-        return [x, y, w, h]
-
-    def depthMatrixToPointCloudPos(self, z, camera_params, scale=1000):
+    def _depthMatrixToPointCloudPos(self, z, camera_params, scale=1000):
         '''
             Credit to: Logic1
             https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
@@ -447,7 +487,7 @@ class Kinect():
 
         return np.column_stack((z.ravel() / scale, R.ravel(), -C.ravel()))
 
-    def applyCameraMatrixOrientation(self, pt, camera_position):
+    def _applyCameraMatrixOrientation(self, pt, camera_position):
         '''
             Credit to: Logic1
             https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
@@ -474,43 +514,3 @@ class Kinect():
         pt[:] += np.float_([camera_position['x'], camera_position['y'], camera_position['z']])
 
         return pt
-
-    def record(self, filename=None):
-        '''
-            record: Records a video from the raw color kinect video. Video
-                is saved as a 1080p avi. 
-            ARGUMENTS:
-                filename: (str)
-                    Name to save the video with. 
-        '''
-        from datetime import datetime
-
-        # Create the filename 
-        now = datetime.now()
-        if (filename is None):
-            filename = 'video'+now.strftime("%m_%d_%Y_%H_%M_%S")+'.avi'
-
-        # Make sure the file extension is correct
-        _, ext = os.path.splitext(filename)
-        if (ext != '.avi'):
-            print('Only supported recording type is avi.')
-            exit(-1)
-
-        # Create the video writer
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(filename, fourcc, 25, COLOR_SHAPE)
-
-        # Record. On keyboard interrupt close and save. 
-        try:
-            while True:
-                frame = self.get_frame([KinectIm.RAW_COLOR])[0]
-                frame = frame[0][:,:,:3]
-                cv2.imshow("KinectVideo", frame)
-                out.write(frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-            out.release()
-            cv2.destroyAllWindows()
-        except KeyboardInterrupt:
-            out.release()
-            cv2.destroyAllWindows()

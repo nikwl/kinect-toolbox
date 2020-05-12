@@ -2,7 +2,7 @@ import socket
 
 from imagezmq import imagezmq
 
-class Bouncer():
+class Streamer():
 	def connect_to_incoming(self, incoming_socket=None):
 		if incoming_socket:
 			self.imageHub = imagezmq.ImageHub(connect_to=incoming_socket)
