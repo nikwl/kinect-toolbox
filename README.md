@@ -1,9 +1,10 @@
 # kinect-toolbox
 ## Overview
-This is a set of helper fuctions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and diffult. With this wrapper the kinect can be used more like a cv2 webcam. Also adds an easy method to obtain and view point clouds. Based partially on the (stack overflow question)[https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed] asked by user Logic1, which I credit for some of the optimization and visualization code.
+This is a set of helper fuctions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and diffult. With this wrapper the kinect can be used more like a cv2 webcam. Also adds an easy method to obtain and view point clouds. Based partially on the [stack overflow question](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed) asked by user Logic1, which I credit for some of the optimization and visualization code.
 
 ## Installation
-TODO
+1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2)
+2) TODO
 
 ## Usage
 ```python
