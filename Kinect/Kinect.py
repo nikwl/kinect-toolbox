@@ -26,10 +26,6 @@ except:
     pipeline = CpuPacketPipeline()
 print("Packet pipeline:", type(pipeline).__name__)
 
-# Local imports
-from Utility.Image import get_image_center_point
-from Utility.Vector import unit_vector
-
 DEPTH_NORMALIZATION = 4.5 # Only applies to distorted depth
 IR_NORMALIZATION = 65535.
 DEPTH_SHAPE = (int(512), 
@@ -37,6 +33,13 @@ DEPTH_SHAPE = (int(512),
                int(4))
 COLOR_SHAPE = (int(1920), 
                int(1080))
+
+def get_image_center_point(image, return_coords=False):
+	s = image.shape
+	r, c = int(s[0]/2), int(s[1]/2)
+	if return_coords:
+		return image[r, c,...], (r,c)
+	return image[r, c,...]
 
 class Kinect():
     def __init__(self, conf_file=None):
@@ -267,7 +270,7 @@ class Kinect():
         '''
 
         # View vector has to be normalized
-        view_vector = unit_vector(view_vector)
+        view_vector = list(np.asarray(view_vector) / np.linalg.norm(np.asarray(view_vector)))
 
         # Get the source point cloud
         ptcld = self.get_ptcld(roi=roi)
@@ -381,7 +384,7 @@ class Kinect():
         cv2.destroyAllWindows()
         return [x, y, w, h]
 
-      def record(self, filename=None):
+    def record(self, filename=None):
         '''
             record: Records a video from the raw color kinect video. Video
                 is saved as a 1080p avi. 
@@ -514,3 +517,15 @@ class Kinect():
         pt[:] += np.float_([camera_position['x'], camera_position['y'], camera_position['z']])
 
         return pt
+
+if __name__ == '__main__':
+    # Create the kinect object
+    k = Kinect()
+
+    while True:
+        # Specify as many types as you need here
+        color_frame = k.get_frame([KinectIm.COLOR])[0]
+
+        cv2.imshow('frame', color_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
