@@ -4,7 +4,19 @@ This is a set of helper fuctions that I wrote to make using the Microsoft Kinect
 
 ## Installation
 1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2)
-2) TODO
+2) Update your paths:
+```bash
+export LIBFREENECT2_INSTALL_PREFIX=~/freenect2
+export LD_LIBRARY_PATH=$HOME/freenect2/lib:$LD_LIBRARY_PATH
+```
+3) Install required python packages:
+```bash
+pip install -r requirements.txt
+```
+4) Test installation:
+```bash
+python test.py
+```
 
 ## Usage
 ```python
