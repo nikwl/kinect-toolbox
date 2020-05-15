@@ -3,7 +3,7 @@
 This is a set of helper fuctions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and diffult. With this wrapper the kinect can be used more like a cv2 webcam. Based partially on the [stack overflow question](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed) asked by user Logic1, which I credit for some of the optimization and visualization code.
 
 ## Installation
-1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2)
+1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2) 
 2) Update your paths:
     ```bash
     export LIBFREENECT2_INSTALL_PREFIX=~/freenect2
@@ -13,6 +13,7 @@ This is a set of helper fuctions that I wrote to make using the Microsoft Kinect
     ```bash
     pip install -r requirements.txt
     ```
+    If you run into `No module named 'numpy'` error, use pip to manually install numpy and cyton first, then install from the requirements file. 
 4) Test installation:
     ```bash
     python test.py

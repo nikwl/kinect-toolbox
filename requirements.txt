@@ -1,6 +1,7 @@
-numpy==1.16.6
-cython==0.29.17
+numpy
+scipy
+cython
+pyquaternion
 pylibfreenect2==0.1.3
-opencv-python==4.2.0.32
-pyquaternion==0.9.5
-scipy==1.2.3
+opencv-python>=4.2.0.0
+imagezmq
