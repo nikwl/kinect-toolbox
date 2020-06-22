@@ -6,7 +6,6 @@ import sys
 import os
 import json
 import math
-import warnings
 from enum import Enum
 
 import cv2
@@ -25,8 +24,6 @@ except:
     pipeline = CpuPacketPipeline()
 print("Packet pipeline:", type(pipeline).__name__)
 
-DEPTH_NORMALIZATION = 4.5 # Only applies to distorted depth
-IR_NORMALIZATION = 65535.
 DEPTH_SHAPE = (int(512), int(424), int(4))
 COLOR_SHAPE = (int(1920), int(1080))
 
@@ -37,13 +34,6 @@ class KFrame(Enum):
     IR = 2
     RAW_COLOR = 3
     RAW_DEPTH = 4
-
-def get_image_center_point(image, return_coords=False):
-	s = image.shape
-	r, c = int(s[0]/2), int(s[1]/2)
-	if return_coords:
-		return image[r, c,...], (r,c)
-	return image[r, c,...]
 
 class Kinect():
     def __init__(self, params_file=None, device_index=0):
@@ -68,12 +58,14 @@ class Kinect():
                     connected. 
         '''
 
-        fn = Freenect2()
-        num_devices = fn.enumerateDevices()
+        self.fn = Freenect2()
+        num_devices = self.fn.enumerateDevices()
         if (num_devices == 0):
             raise RuntimeError('No device connected!')
-        self.device = fn.openDevice(fn.getDeviceSerialNumber(device_index), 
-                                    pipeline=pipeline)
+        if (device_index >= num_devices):
+            raise RuntimeError('Device index not availible!')
+        self.device = self.fn.openDevice(self.fn.getDeviceSerialNumber(device_index), 
+            pipeline=pipeline)
 
         # We want all the types
         types = (FrameType.Color | FrameType.Depth | FrameType.Ir)
@@ -142,12 +134,12 @@ class Kinect():
             # If the file wasn't passed then use the default file, if it exists
             params_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'kinect.conf')
             if (not os.path.exists(params_file)):
-                warnings.warn('Default kinect parameters file at {} not found, running with automatically generated parameters'.format(params_file))
+                print('Default kinect parameters file at {} not found, running with automatically generated parameters'.format(params_file))
                 return None, None
         else:
             # If the file was passed but isn't there, warn
             if (not os.path.exists(params_file)): 
-                warnings.warn('Kienct parameters file at {} not found, running with automatically generated parameters'.format(params_file))
+                print('Kienct parameters file at {} not found, running with automatically generated parameters'.format(params_file))
                 return None, None
         
         with open(params_file, 'r') as infile:
@@ -157,14 +149,14 @@ class Kinect():
         position, intrinsic_params = params_dict.get('transform', None), params_dict.get('intrinsic_parameters', None)
         return position, intrinsic_params
 
-    def get_frame(self, frame_type=None):
+    def get_frame(self, frame_type=KFrame.COLOR):
         '''
             get_frame: Returns singleton or list of frames corresponding to 
                 input. Frames can be any of the following types:
                     KFrame.COLOR     - returns a 512 x 424 color image, 
                         registered to depth image
                     KFrame.DEPTH     - returns a 512 x 424 undistorted depth 
-                        image (units are mm)
+                        image (units are m)
                     KFrame.IR        - returns a 512 x 424 ir image
                     KFrame.RAW_COLOR - returns a 1920 x 1080 color image
                     KFrame.RAW_DEPTH - returns a 512 x 424 depth image 
@@ -175,45 +167,34 @@ class Kinect():
                     list. The default argument will return a single registered 
                     color image. 
         '''
-
-        # Color is default frame type
-        if (frame_type is None):
-            frame_type = [KFrame.COLOR]
+        
+        def get_single_frame(ft):
+            if (ft == KFrame.COLOR):
+                f, _ = self._get_registered_frame(frames)
+                return f
+            elif (ft == KFrame.DEPTH):
+                return self._get_depth_frame(frames)
+            elif (ft == KFrame.RAW_COLOR):
+                return self._get_raw_color_frame(frames)
+            elif (ft == KFrame.RAW_DEPTH):
+                return self._get_raw_depth_frame(frames)
+            elif (ft == KFrame.IR):
+                return self._get_ir_frame(frames)
 
         # If just one frame type was passed
-        singleton = False
+        frames = self.listener.waitForNewFrame()
         if isinstance(frame_type, KFrame):
-            singleton = True
-            frame_type = [frame_type]
+            return_frames = get_single_frame(frame_type)
+            self.listener.release(frames)
+        else:
+            return_frames = [None] * len(frame_type)
+            for i, ft in enumerate(frame_type):
+                return_frames[i] = get_single_frame(ft)          
+            self.listener.release(frames)
 
-        while True:
-            if (self.listener.hasNewFrame()):
-                frames = self.listener.waitForNewFrame()
+        return return_frames
 
-                # Get each frame
-                return_frames = [] * len(frame_type)
-                for i, ft in enumerate(frame_type):
-                    if (ft == KFrame.COLOR):
-                        f, _ = self._get_registered_frame(frames)
-                        return_frames[i] = f
-                    elif (ft == KFrame.DEPTH):
-                        f = self._get_depth_frame(frames)
-                        return_frames[i] = f
-                    elif (ft == KFrame.RAW_COLOR):
-                        return_frames[i] = self._get_raw_color_frame(frames)
-                    elif (ft == KFrame.RAW_DEPTH):
-                        return_frames[i] = self._get_raw_depth_frame(frames)
-                    elif (ft == KFrame.IR):
-                        return_frames[i] = self._get_ir_frame(frames)
-
-                # Release and return the frames
-                self.listener.release(frames)
-                if (singleton):
-                    return return_frames[0]
-                else:
-                    return return_frames
-
-    def get_ptcld(self, roi=None, scale=1, colorized=False):
+    def get_ptcld(self, roi=None, scale=1000, colorized=False):
         '''
             get_ptcld: Returns a point cloud, generated from depth image. Units 
                 are mm by default.
@@ -222,55 +203,53 @@ class Kinect():
                     If specified, will crop the point cloud according to the 
                     input roi. Does not accelerate runtime. 
                 scale: int
-                    Scales the point cloud such that ptcl = ptcl (mm) / scale. 
-                    ie scale = 1000 returns point cloud in meters. 
+                    Scales the point cloud such that ptcl = ptcl (m) / scale. 
+                    ie scale = 1000 returns point cloud in mm. 
                 colorized: bool
                     If True, retuns color matrix along with point cloud such 
                     that if pt = ptcld[x,y,:], the color of that point is color 
                     = color[x,y,:]
         '''
-        while True:
-            if self.listener.hasNewFrame():
+        # Get undistorted (and registered) frames
+        frames = self.listener.waitForNewFrame()
+        if (colorized):
+            registered, undistorted = self._get_registered_frame(frames)
+        else:
+            undistorted = self._get_depth_frame(frames)
+        self.listener.release(frames)
 
-                # Get undistorted (and registered) frames
-                frames = self.listener.waitForNewFrame()
+        # Get point cloud 
+        ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
+
+        # Adujust point cloud based on real world coordinates
+        ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
+
+        # Reshape to correct size
+        ptcld = ptcld.reshape(DEPTH_SHAPE[1], DEPTH_SHAPE[0], 3)
+        
+        # If roi, extract
+        if (roi is not None):
+            if (isinstance(roi, tuple) or isinstance(roi, list)):
+                [y, x, h, w] = roi
+                xmin, xmax = int(x), int(x+w)
+                ymin, ymax = int(y), int(y+h)
+                ptcld = ptcld[xmin:xmax, ymin:ymax, :]
                 if (colorized):
-                    registered, undistorted = self._get_registered_frame(frames)
-                else:
-                    undistorted = self._get_depth_frame(frames)
-                self.listener.release(frames)
+                    registered = registered[xmin:xmax, ymin:ymax, :]
+            else:
+                roi = np.clip(roi, 0, 1)
+                for c in range(3):
+                    ptcld[:,:,c] = np.multiply(ptcld[:,:,c], roi) 
 
-                # Get point cloud 
-                ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
-
-                # Adujust point cloud based on real world coordinates
-                ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
-
-                # Reshape to correct size
-                ptcld = ptcld.reshape(DEPTH_SHAPE[1], DEPTH_SHAPE[0], 3)
-                
-                # If roi, extract
-                if (roi is not None):
-                    if (isinstance(roi, tuple) or isinstance(roi, list)):
-                        [y, x, h, w] = roi
-                        xmin, xmax = int(x), int(x+w)
-                        ymin, ymax = int(y), int(y+h)
-                        ptcld = ptcld[xmin:xmax, ymin:ymax, :]
-                        if (colorized):
-                            registered = registered[xmin:xmax, ymin:ymax, :]
-                    else:
-                        roi = np.clip(roi, 0, 1)
-                        for c in range(3):
-                            ptcld[:,:,c] = np.multiply(ptcld[:,:,c], roi) 
-
-                if (colorized):
-                    # Format the color registration map - To become the "color" input for the scatterplot's setData() function.
-                    colors = np.divide(registered, 255) # values must be between 0.0 - 1.0
-                    colors = colors.reshape(colors.shape[0] * colors.shape[1], 4) # From: Rows X Cols X RGB -to- [[r,g,b],[r,g,b]...]
-                    colors = colors[:, :3:]  # remove alpha (fourth index) from BGRA to BGR
-                    colors = colors[...,::-1] #BGR to RGB
-
-                return ptcld, colors
+        if (colorized):
+            # Format the color registration map - To become the "color" input for the scatterplot's setData() function.
+            colors = np.divide(registered, 255) # values must be between 0.0 - 1.0
+            colors = colors.reshape(colors.shape[0] * colors.shape[1], 4) # From: Rows X Cols X RGB -to- [[r,g,b],[r,g,b]...]
+            colors = colors[:, :3:]  # remove alpha (fourth index) from BGRA to BGR
+            colors = colors[...,::-1] #BGR to RGB
+            return ptcld, colors
+        
+        return ptcld 
 
     def get_perspective_depth(self, principal_point, view_vector, fov, roi=None, auto_adjust=False, blur_amnt=5):
         '''
@@ -310,6 +289,12 @@ class Kinect():
 
         # Auto adjust places the principal point 50 mm above the center of the point cloud. 
         if (auto_adjust[0] and (roi is not None)):
+            def get_image_center_point(image, return_coords=False):
+                s = image.shape
+                r, c = int(s[0]/2), int(s[1]/2)
+                if return_coords:
+                    return image[r, c,...], (r,c)
+                return image[r, c,...]
             principal_point = [(abs(vv) * 50) + cp for vv, cp in zip(view_vector, get_image_center_point(ptcld))]
 
         # Extract size of resulting image
@@ -331,7 +316,7 @@ class Kinect():
         # Sometimes the vectors are already aligned
         if (d == -1):
             valid_points = vector_cloud[:, 2] >= 0.0
-            rotm = jnp.identity(3)
+            rotm = np.identity(3)
         elif (d == 1):
             valid_points = vector_cloud[:, 2] <= 0.0
             rotm = np.identity(3)
@@ -406,12 +391,13 @@ class Kinect():
         frame = self.get_frame(frame_type)
         [x, y, w, h] = cv2.selectROI('roi window', frame, True, False)
         cv2.destroyWindow('roi window')
-        return [x, y, w, h]
+        return frame[x:x+w, y:y+h], [x, y, w, h]
 
-    def record(self, filename=None):
+    def record(self, frame_type=KFrame.COLOR, video_codec='XVID', filename=None):
         '''
-            record: Records a video from the raw color kinect video. Video
-                is saved as a 1080p avi. 
+            record: Records a video of the type specified. If no filename is 
+                given, records as a .avi. Do not call this in conjunction with
+                a typical cv2 display loop. 
             ARGUMENTS:
                 filename: (str)
                     Name to save the video with. 
@@ -419,25 +405,23 @@ class Kinect():
         from datetime import datetime
 
         # Create the filename 
-        now = datetime.now()
         if (filename is None):
-            filename = 'video'+now.strftime("%m_%d_%Y_%H_%M_%S")+'.avi'
-
-        # Make sure the file extension is correct
-        _, ext = os.path.splitext(filename)
-        if (ext != '.avi'):
-            print('Only supported recording type is avi.')
-            exit(-1)
+            filename = 'kinect_{}.avi'.format(datetime.now().strftime("%m_%d_%Y_%H_%M_%S"))
 
         # Create the video writer
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(filename, fourcc, 25, COLOR_SHAPE)
+        if (frame_type == KFrame.RAW_COLOR):
+            shape = COLOR_SHAPE
+        else:
+            shape = DEPTH_SHAPE[:2]
+        fourcc = cv2.VideoWriter_fourcc(*video_codec)
+        out = cv2.VideoWriter(filename, fourcc, 25, shape)
 
         # Record. On keyboard interrupt close and save. 
         try:
             while True:
-                frame = self.get_frame([KFrame.RAW_COLOR])[0]
-                frame = frame[0][:,:,:3]
+                frame = self.get_frame(frame_type=frame_type)
+                if (frame_type == KFrame.RAW_COLOR):
+                    frame = frame[:,:,:3]                
                 cv2.imshow("KinectVideo", frame)
                 out.write(frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -445,6 +429,8 @@ class Kinect():
             out.release()
             cv2.destroyAllWindows()
         except KeyboardInterrupt:
+            pass
+        finally:
             out.release()
             cv2.destroyAllWindows()
 
@@ -460,17 +446,20 @@ class Kinect():
         '''
         return Frame(shape[0], shape[1], shape[2])
 
-    def _get_raw_color_frame(self, frames):
+    @staticmethod
+    def _get_raw_color_frame(frames):
         ''' _get_raw_color_frame: Return the current rgb image as a cv2 image. '''
         return cv2.resize(frames["color"].asarray(), COLOR_SHAPE)
 
-    def _get_raw_depth_frame(self, frames):
+    @staticmethod
+    def _get_raw_depth_frame(frames):
         ''' _get_raw_depth_frame: Return the current depth image as a cv2 image. '''
-        return cv2.resize(frames["depth"].asarray() / DEPTH_NORMALIZATION, COLOR_SHAPE)
+        return cv2.resize(frames["depth"].asarray(), DEPTH_SHAPE[:2])
 
-    def _get_ir_frame(self, frames):
+    @staticmethod
+    def _get_ir_frame(frames):
         ''' get_ir_depth_frame: Return the current ir image as a cv2 image. '''
-        return cv2.resize(frames["ir"].asarray() / IR_NORMALIZATION, COLOR_SHAPE)
+        return cv2.resize(frames["ir"].asarray(), DEPTH_SHAPE[:2])
     
     def _get_depth_frame(self, frames):
         ''' _get_depth_frame: Return the current undistorted depth image. '''
@@ -486,11 +475,11 @@ class Kinect():
         self.registration.undistortDepth(frames["depth"], undistorted)
         self.registration.apply(frames["color"], frames["depth"], undistorted, registered)
         undistorted = np.copy(undistorted.asarray(np.float32))
-        registered = np.copy(registered.asarray(np.uint8))
+        registered = np.copy(registered.asarray(np.uint8))[...,:3]
         return registered, undistorted
 
     @staticmethod
-    def _depthMatrixToPointCloudPos(z, camera_params, scale=1000):
+    def _depthMatrixToPointCloudPos(z, camera_params, scale=1):
         '''
             Credit to: Logic1
             https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
