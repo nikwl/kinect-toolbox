@@ -40,7 +40,7 @@ Get a video frame from the kinect. Optionally specify a list of image types and 
 * KFrame.RAW_COLOR - returns a 1920 x 1080 color image
 * KFrame.RAW_DEPTH - returns a 512 x 424 depth image (units are mm)
 * KFrame.COLOR     - returns a 512 x 424 color image, registered to depth image
-* KFrame.DEPTH     - returns a 512 x 424 undistorted depth, image (units are m)
+* KFrame.DEPTH     - returns a 512 x 424 undistorted depth, image (units are mm)
 * KFrame.IR        - returns a 512 x 424 ir image
 
 Note that depth images have units in millimeters. To display them in a window without clipping first rescale the values:
