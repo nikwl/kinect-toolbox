@@ -2,6 +2,10 @@
 ## Overview
 This is a set of helper functions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and difficult. With this wrapper the kinect can be used more like a cv2 webcam. Provides methods to get color, depth, registered color, registered depth, and ir images, record video, get point clouds (quickly), create synthetic depth images, and select and return a region of interest. Point cloud acceleration methods are based partially on this [stack overflow question](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed) asked by user Logic1, which I thought was really neat.
 
+### Updates:
+#### 8-23-20
+* Added the ability to operate in headless mode. Connect the Kinect to a server and collect data remotely!
+
 ## Installation
 1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2) 
 2) Update your paths:
@@ -35,6 +39,18 @@ while True:
 ```
 
 ## Methods
+#### Kinect
+The kinect class. Supports the following input arguments:
+* params_file: Path to a kinect parameters file (.json). Parameters file can contain the kinect intrinsic parameters and a 3D transformation (which is applied to point clouds). See kinect._load_camera_params() for more information. 
+* device_index: Use to interface with a specific device if more than one is connected. 
+* headless: If true, will allow the kinect to collect and process data without a display. Connect the Kinect to a server and collect data remotely!
+* pipeline: Optionally pass a pylibfreenect2 pipeline that will be used with the kinect. Note that this will override the headless argument - Headless requires CUDA or OpenCL pipeline. Possible types are as follows:
+    * OpenGLPacketPipeline
+    * CpuPacketPipeline
+    * OpenCLPacketPipeline
+    * CudaPacketPipeline
+    * OpenCLKdePacketPipeline
+
 #### get_frame
 Get a video frame from the kinect. Optionally specify a list of image types and the function will return a corresponding list of images. Available types are:
 * KFrame.RAW_COLOR - returns a 1920 x 1080 color image

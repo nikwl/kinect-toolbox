@@ -1,7 +1,3 @@
-# To use, need to run this first
-# export LIBFREENECT2_INSTALL_PREFIX=~/freenect2
-# export LD_LIBRARY_PATH=$HOME/freenect2/lib:$LD_LIBRARY_PATH
-
 import sys
 import os
 import json
@@ -16,14 +12,6 @@ from scipy.interpolate import griddata
 from pylibfreenect2 import Freenect2, SyncMultiFrameListener
 from pylibfreenect2 import FrameType, Registration, Frame
 
-try:
-    from pylibfreenect2 import OpenGLPacketPipeline
-    pipeline = OpenGLPacketPipeline()
-except:
-    from pylibfreenect2 import CpuPacketPipeline
-    pipeline = CpuPacketPipeline()
-print("Packet pipeline:", type(pipeline).__name__)
-
 DEPTH_SHAPE = (int(512), int(424), int(4))
 COLOR_SHAPE = (int(1920), int(1080))
 
@@ -36,10 +24,10 @@ class KFrame(Enum):
     RAW_DEPTH = 4
 
 class Kinect():
-    def __init__(self, params_file=None, device_index=0):
+    def __init__(self, params_file=None, device_index=0, headless=False, pipeline=None):
         '''
             Kinect:  Kinect interface using the libfreenect library. Will query
-                libfreenect for availible devices, if none are found will throw
+                libfreenect for available devices, if none are found will throw
                 a RuntimeError. Otherwise will open the device for collecting
                 color, depth, and ir data. 
 
@@ -56,6 +44,20 @@ class Kinect():
                 device_index: int
                     Use to interface with a specific device if more than one is
                     connected. 
+                headless: bool
+                    If true, will allow the kinect to collect and process data
+                    without a display. Usefull if the kinect is plugged into a 
+                    server. 
+                pipeline: PacketPipeline
+                    Optionally pass a pylibfreenect2 pipeline that will be used
+                    with the kinect. Possible types are as follows:
+                        OpenGLPacketPipeline
+                        CpuPacketPipeline
+                        OpenCLPacketPipeline
+                        CudaPacketPipeline
+                        OpenCLKdePacketPipeline
+                    Note that this will override the headless argument - 
+                    Headless requires CUDA or OpenCL pipeline. 
         '''
 
         self.fn = Freenect2()
@@ -64,6 +66,11 @@ class Kinect():
             raise RuntimeError('No device connected!')
         if (device_index >= num_devices):
             raise RuntimeError('Device index not availible!')
+
+        # Import pipeline depending on headless state
+        if (pipeline is None):
+            pipeline = self._import_pipeline(headless)
+        print("Packet pipeline:", type(pipeline).__name__)
         self.device = self.fn.openDevice(self.fn.getDeviceSerialNumber(device_index), 
             pipeline=pipeline)
 
@@ -96,7 +103,27 @@ class Kinect():
 
     def __del__(self):
         self.device.stop()
-        self.device.close()
+
+    @staticmethod
+    def _import_pipeline(headless=False):
+        '''
+            _import_pipeline: Imports the pylibfreenect2 pipeline based on
+                whether or not headless mode is enabled. Unfortunately 
+                more intelligent importing cannot be implemented (contrary
+                to the example scripts) because the import raises a C
+                exception, not a python one. As a result the only pipelines
+                this function will load are OpenGL or OpenCL.
+            ARGUMENTS:
+                headless: bool
+                    whether or not to run kinect in headless mode.
+        '''
+        if headless:
+            from pylibfreenect2 import OpenCLPacketPipeline
+            pipeline = OpenCLPacketPipeline()
+        else:
+            from pylibfreenect2 import OpenGLPacketPipeline
+            pipeline = OpenGLPacketPipeline()
+        return pipeline
 
     @staticmethod
     def _load_camera_params(params_file=None):
@@ -180,17 +207,18 @@ class Kinect():
                 return self._get_raw_depth_frame(frames)
             elif (ft == KFrame.IR):
                 return self._get_ir_frame(frames)
+            else:
+                raise RuntimeError('Unknown frame type {}'.format(ft))
 
         # If just one frame type was passed
         frames = self.listener.waitForNewFrame()
         if isinstance(frame_type, KFrame):
             return_frames = get_single_frame(frame_type)
-            self.listener.release(frames)
         else:
             return_frames = [None] * len(frame_type)
             for i, ft in enumerate(frame_type):
-                return_frames[i] = get_single_frame(ft)          
-            self.listener.release(frames)
+                return_frames[i] = get_single_frame(ft)
+        self.listener.release(frames)
 
         return return_frames
 
@@ -206,7 +234,7 @@ class Kinect():
                     Scales the point cloud such that ptcl = ptcl (m) / scale. 
                     ie scale = 1000 returns point cloud in mm. 
                 colorized: bool
-                    If True, retuns color matrix along with point cloud such 
+                    If True, returns color matrix along with point cloud such 
                     that if pt = ptcld[x,y,:], the color of that point is color 
                     = color[x,y,:]
         '''
@@ -221,7 +249,7 @@ class Kinect():
         # Get point cloud 
         ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
 
-        # Adujust point cloud based on real world coordinates
+        # Adjust point cloud based on real world coordinates
         ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
 
         # Reshape to correct size
@@ -273,7 +301,7 @@ class Kinect():
                     Optional, will crop the point cloud before rendering the 
                     depth image.
                 auto_adjust: bool
-                    Optional, will change the pricipal point and fov to give 
+                    Optional, will change the principal point and fov to give 
                     good view of the roi. 
                 blur_amnt: int
                     How much blur to apply to the resulting depth map. Will 
@@ -441,7 +469,7 @@ class Kinect():
                 specified. Note that Frames are pointers, and as such returning 
                 using numpy images created from them directly results in some
                 strange behavior. After using the frame, it is highly 
-                recommended to copy the resultimg image using np.copy() rather 
+                recommended to copy the resulting image using np.copy() rather 
                 than returning the Frame referencing array directly. 
         '''
         return Frame(shape[0], shape[1], shape[2])
