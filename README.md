@@ -17,7 +17,7 @@ This is a set of helper functions that I wrote to make using the Microsoft Kinec
     ```bash
     pip install -r requirements.txt
     ```
-    If you run into `No module named 'numpy'` error, use pip to manually install numpy and cyton first, then install from the requirements file. 
+    If you run into `No module named 'numpy'` error, use pip to manually install numpy and cython first, then install from the requirements file. 
 4) Test installation:
     ```bash
     python test.py
