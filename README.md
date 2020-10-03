@@ -11,14 +11,11 @@ Credit for point cloud acceleration methods goes to stackoverflow user [Logic1](
     export LIBFREENECT2_INSTALL_PREFIX=~/freenect2
     export LD_LIBRARY_PATH=$HOME/freenect2/lib:$LD_LIBRARY_PATH
     ```
-3) Install required python packages:
+3) pip install:
     ```bash
-    pip install -r requirements.txt
-    ``` 
-4) Test installation:
-    ```bash
-    python test.py
+    pip install ktb
     ```
+
 This package has been tested on Ubuntu 18.04 with python3.6.
 
 ## Usage
