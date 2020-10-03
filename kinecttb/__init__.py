@@ -10,5 +10,9 @@
 # export LD_LIBRARY_PATH=$HOME/freenect2/lib:$LD_LIBRARY_PATH
 
 from .kinecttb import *
+from .constants import *
 
-assert (os.getenv('LIBFREENECT2_INSTALL_PREFIX') is not None), 'LIBFREENECT2_INSTALL_PREFIX environment variable not set, please set this before attempting to import'
+if (os.getenv('LIBFREENECT2_INSTALL_PREFIX') is None):
+    import warnings
+    warnings.warn("LIBFREENECT2_INSTALL_PREFIX environment variable not set", 
+        ImportWarning)

@@ -2,7 +2,6 @@ import sys
 import os
 import json
 import math
-from enum import Enum
 
 import cv2
 import numpy as np
@@ -12,16 +11,10 @@ from scipy.interpolate import griddata
 from pylibfreenect2 import Freenect2, SyncMultiFrameListener
 from pylibfreenect2 import FrameType, Registration, Frame
 
+from .constants import *
+
 DEPTH_SHAPE = (int(512), int(424), int(4))
 COLOR_SHAPE = (int(1920), int(1080))
-
-class KFrame(Enum):
-    ''' KFrame: Specify kinect frame types '''
-    COLOR = 0
-    DEPTH = 1
-    IR = 2
-    RAW_COLOR = 3
-    RAW_DEPTH = 4
 
 class Kinect():
     def __init__(self, params_file=None, device_index=0, headless=False, pipeline=None):
@@ -31,7 +24,7 @@ class Kinect():
                 a RuntimeError. Otherwise will open the device for collecting
                 color, depth, and ir data. 
 
-                Use kinect.get_frame([KFrame.<>]) within a typical opencv 
+                Use kinect.get_frame([<frame type>]) within a typical opencv 
                 capture loop to collect data from the kinect.
 
                 When instantiating, optionally pass a parameters file with 
@@ -65,7 +58,7 @@ class Kinect():
         if (num_devices == 0):
             raise RuntimeError('No device connected!')
         if (device_index >= num_devices):
-            raise RuntimeError('Device index not availible!')
+            raise RuntimeError('Device index not available!')
 
         # Import pipeline depending on headless state
         if (pipeline is None):
@@ -86,15 +79,11 @@ class Kinect():
         self.registration = Registration(self.device.getIrCameraParams(),
                                          self.device.getColorCameraParams())
    
-        # Try an load parameters
-        position, intrinsic_params = self._load_camera_params(params_file)
-        if (position is not None):
-            self.CameraPosition = position
-        if (intrinsic_params is not None):
-            self.CameraParams = intrinsic_params
-        else:
+        # Try and load parameters
+        self._camera_position, self._camera_params = self._load_camera_params(params_file)
+        if (self._camera_params is None):
             # Kinects's intrinsic parameters based on v2 hardware
-            self.CameraParams = {
+            self._camera_params = {
                 "cx":self.device.getIrCameraParams().cx,
                 "cy":self.device.getIrCameraParams().cy,
                 "fx":self.device.getIrCameraParams().fx,
@@ -156,68 +145,62 @@ class Kinect():
                 params_file: str
                     Path to a kinect parameters file (.json). 
         '''
-
         if (params_file is None):
-            # If the file wasn't passed then use the default file, if it exists
-            params_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'kinect.conf')
-            if (not os.path.exists(params_file)):
-                print('Default kinect parameters file at {} not found, running with automatically generated parameters'.format(params_file))
-                return None, None
-        else:
-            # If the file was passed but isn't there, warn
-            if (not os.path.exists(params_file)): 
-                print('Kienct parameters file at {} not found, running with automatically generated parameters'.format(params_file))
-                return None, None
-        
-        with open(params_file, 'r') as infile:
-            params_dict = json.load(infile)
+            return None, None
+        try:
+            with open(params_file, 'r') as infile:
+                params_dict = json.load(infile)
+        except FileNotFoundError:
+            print('Kienct configuration file {} not found'.format(params_file))
+            raise
 
-        # If the keys do not exist, return None
-        position, intrinsic_params = params_dict.get('transform', None), params_dict.get('intrinsic_parameters', None)
-        return position, intrinsic_params
+        # If the keys do not exist, return None                                    
+        return params_dict.get('transform', None),
+               params_dict.get('intrinsic_parameters', None)
 
-    def get_frame(self, frame_type=KFrame.COLOR):
+    def get_frame(self, frame_type=COLOR):
         '''
             get_frame: Returns singleton or list of frames corresponding to 
                 input. Frames can be any of the following types:
-                    KFrame.COLOR     - returns a 512 x 424 color image, 
+                    COLOR     - returns a 512 x 424 color image, 
                         registered to depth image
-                    KFrame.DEPTH     - returns a 512 x 424 undistorted depth 
+                    DEPTH     - returns a 512 x 424 undistorted depth 
                         image (units are m)
-                    KFrame.IR        - returns a 512 x 424 ir image
-                    KFrame.RAW_COLOR - returns a 1920 x 1080 color image
-                    KFrame.RAW_DEPTH - returns a 512 x 424 depth image 
+                    IR        - returns a 512 x 424 ir image
+                    IR        - returns a 512 x 424 ir image
+                    RAW_COLOR - returns a 1920 x 1080 color image
+                    RAW_DEPTH - returns a 512 x 424 depth image 
                         (units are mm)
             ARGUMENTS:
-                frame_type: [KFrame] or KFrame
+                frame_type: [frame type] or frame type
                     A list of frame types. Output corresponds directly to this 
                     list. The default argument will return a single registered 
                     color image. 
         '''
         
         def get_single_frame(ft):
-            if (ft == KFrame.COLOR):
+            if (ft == COLOR):
                 f, _ = self._get_registered_frame(frames)
                 return f
-            elif (ft == KFrame.DEPTH):
+            elif (ft == DEPTH):
                 return self._get_depth_frame(frames)
-            elif (ft == KFrame.RAW_COLOR):
+            elif (ft == RAW_COLOR):
                 return self._get_raw_color_frame(frames)
-            elif (ft == KFrame.RAW_DEPTH):
+            elif (ft == RAW_DEPTH):
                 return self._get_raw_depth_frame(frames)
-            elif (ft == KFrame.IR):
+            elif (ft == IR):
                 return self._get_ir_frame(frames)
             else:
                 raise RuntimeError('Unknown frame type {}'.format(ft))
 
         # If just one frame type was passed
         frames = self.listener.waitForNewFrame()
-        if isinstance(frame_type, KFrame):
-            return_frames = get_single_frame(frame_type)
-        else:
+        if isinstance(frame_type, list):
             return_frames = [None] * len(frame_type)
             for i, ft in enumerate(frame_type):
                 return_frames[i] = get_single_frame(ft)
+        else:
+            return_frames = get_single_frame(frame_type)
         self.listener.release(frames)
 
         return return_frames
@@ -247,10 +230,11 @@ class Kinect():
         self.listener.release(frames)
 
         # Get point cloud 
-        ptcld = self._depthMatrixToPointCloudPos(undistorted, self.CameraParams, scale=scale)
+        ptcld = self._depthMatrixToPointCloudPos(undistorted, self._camera_params, scale=scale)
 
         # Adjust point cloud based on real world coordinates
-        ptcld = self._applyCameraMatrixOrientation(ptcld, self.CameraPosition)
+        if (self._camera_position is not None):
+            ptcld = self._applyCameraMatrixOrientation(ptcld, self._camera_position)
 
         # Reshape to correct size
         ptcld = ptcld.reshape(DEPTH_SHAPE[1], DEPTH_SHAPE[0], 3)
@@ -413,7 +397,7 @@ class Kinect():
                 specified, opens a cv2 window and allows the user to select a
                 region.
             ARGUMENTS:
-                frame_type: KFrame
+                frame_type: frame type
                     A single frame type.
         '''
         frame = self.get_frame(frame_type)
@@ -421,7 +405,7 @@ class Kinect():
         cv2.destroyWindow('roi window')
         return frame[x:x+w, y:y+h], [x, y, w, h]
 
-    def record(self, frame_type=KFrame.COLOR, video_codec='XVID', filename=None):
+    def record(self, frame_type=COLOR, video_codec='XVID', filename=None):
         '''
             record: Records a video of the type specified. If no filename is 
                 given, records as a .avi. Do not call this in conjunction with
@@ -437,18 +421,18 @@ class Kinect():
             filename = 'kinect_{}.avi'.format(datetime.now().strftime("%m_%d_%Y_%H_%M_%S"))
 
         # Create the video writer
-        if (frame_type == KFrame.RAW_COLOR):
+        if (frame_type == RAW_COLOR):
             shape = COLOR_SHAPE
         else:
             shape = DEPTH_SHAPE[:2]
         fourcc = cv2.VideoWriter_fourcc(*video_codec)
         out = cv2.VideoWriter(filename, fourcc, 25, shape)
 
-        # Record. On keyboard interrupt close and save. 
+        # Record. On keyboard interrupt close and save.
         try:
             while True:
                 frame = self.get_frame(frame_type=frame_type)
-                if (frame_type == KFrame.RAW_COLOR):
+                if (frame_type == RAW_COLOR):
                     frame = frame[:,:,:3]                
                 cv2.imshow("KinectVideo", frame)
                 out.write(frame)
