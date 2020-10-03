@@ -9,7 +9,7 @@
 # Package files 
 /build
 /dist
-/ktb_nikwl.egg-info
+/ktb.egg-info
 
 # Testing 
 /test
