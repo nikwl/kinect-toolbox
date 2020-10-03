@@ -1,10 +1,8 @@
 # kinect-toolbox
 ## Overview
-This is a set of helper functions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and difficult. With this wrapper the kinect can be used more like a cv2 webcam. Provides methods to get color, depth, registered color, registered depth, and ir images, record video, get point clouds (quickly), create synthetic depth images, and select and return a region of interest. Point cloud acceleration methods are based partially on this [stack overflow question](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed) asked by user Logic1, which I thought was really neat.
+This is a set of helper functions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and difficult. With this wrapper the kinect can be used more like a cv2 webcam. Provides methods to get color, depth, registered color, registered depth, and ir images, record video, get point clouds (quickly), create synthetic depth images, and select and return a region of interest. 
 
-### Updates:
-#### 8-23-20
-* Added the ability to operate in headless mode. Connect the Kinect to a server and collect data remotely!
+Credit for point cloud acceleration methods goes to stackoverflow user [Logic1](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed).
 
 ## Installation
 1) [Install libfreenect2](https://github.com/OpenKinect/libfreenect2) 
@@ -16,22 +14,22 @@ This is a set of helper functions that I wrote to make using the Microsoft Kinec
 3) Install required python packages:
     ```bash
     pip install -r requirements.txt
-    ```
-    If you run into `No module named 'numpy'` error, use pip to manually install numpy and cython first, then install from the requirements file. 
+    ``` 
 4) Test installation:
     ```bash
     python test.py
     ```
+This package has been tested on Ubuntu 18.04 with python3.6.
 
 ## Usage
 ```python
 import cv2
-from kinecttb import Kinect, KFrame
+import ktb
 
-k = Kinect()
+k = ktb.Kinect()
 while True:
     # Specify as many types as you want here
-    color_frame = k.get_frame(KFrame.COLOR)
+    color_frame = k.get_frame(ktb.COLOR)
 
     cv2.imshow('frame', color_frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -39,9 +37,9 @@ while True:
 ```
 
 ## Methods
-#### Kinect
+#### `Kinect()`
 The kinect class. Supports the following input arguments:
-* params_file: Path to a kinect parameters file (.json). Parameters file can contain the kinect intrinsic parameters and a 3D transformation (which is applied to point clouds). See kinect._load_camera_params() for more information. 
+* params_file: Kinect parameters file or dict. Parameters file can contain the kinect intrinsic parameters and a 3D transformation (which is applied to point clouds).
 * device_index: Use to interface with a specific device if more than one is connected. 
 * headless: If true, will allow the kinect to collect and process data without a display. Connect the Kinect to a server and collect data remotely!
 * pipeline: Optionally pass a pylibfreenect2 pipeline that will be used with the kinect. Note that this will override the headless argument - Headless requires CUDA or OpenCL pipeline. Possible types are as follows:
@@ -51,27 +49,27 @@ The kinect class. Supports the following input arguments:
     * CudaPacketPipeline
     * OpenCLKdePacketPipeline
 
-#### get_frame
+#### `Kinect.get_frame()`
 Get a video frame from the kinect. Optionally specify a list of image types and the function will return a corresponding list of images. Available types are:
-* KFrame.RAW_COLOR - returns a 1920 x 1080 color image
-* KFrame.RAW_DEPTH - returns a 512 x 424 depth image (units are mm)
-* KFrame.COLOR     - returns a 512 x 424 color image, registered to depth image
-* KFrame.DEPTH     - returns a 512 x 424 undistorted depth, image (units are mm)
-* KFrame.IR        - returns a 512 x 424 ir image
+
+| Frame Type | Description |
+|-|-|
+| RAW_COLOR | returns a 1920 x 1080 color image |
+| RAW_DEPTH | returns a 512 x 424 depth image (units are mm) |
+| COLOR     | returns a 512 x 424 color image, registered to depth image |
+| DEPTH     | returns a 512 x 424 undistorted depth, image (units are mm) |
+| IR        | returns a 512 x 424 ir image |
 
 Note that depth images have units in millimeters. To display them in a window without clipping first rescale the values:
 ```python
 frame = frame / 4500.
 ```
 
-#### record
+#### `Kinect.record()`
 Records a video from the kinect. Halts execution and opens a cv2 window displaying a stream from the kinect while writing the stream to disk. Optionally specify any of the above frame types to record that specific stream.
 
-#### get_ptcld
+#### `Kinect.get_ptcld()`
 Get a point cloud from the kinect. Returns an point cloud of size [512, 424, 3], corresponding a grid of xyz points. Optionally return a color map derived from the registered color image.
 
-#### get_perspective_depth
+#### `Kinect.get_perspective_depth()`
 Get a simulated depth map from anywhere in the scene by specifying a principal point, viewing vector, and fov. The depth map is generated by tilting a point cloud so that the viewing vector is coincident with the z axis, identifying those points that are within the specified fov, and filling in pixels of the depth map based on whether or not a point appears there.
-
-#### get_roi
-Functions as a wrapper for the opencv method selectROI. When called, collects a new frame of the type specified, opens a cv2 window and allows the user to select a region.

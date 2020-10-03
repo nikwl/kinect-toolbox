@@ -1,6 +1,3 @@
 numpy
-scipy
-cython
-pyquaternion
 pylibfreenect2==0.1.3
 opencv-python>=4.2.0.0

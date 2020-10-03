@@ -1,2 +1,5 @@
 *.pyc
+
+# Environment files
+/env
 /venv

@@ -5,19 +5,18 @@ import math
 
 import cv2
 import numpy as np
-from pyquaternion import Quaternion
-from scipy.interpolate import griddata
 
 from pylibfreenect2 import Freenect2, SyncMultiFrameListener
 from pylibfreenect2 import FrameType, Registration, Frame
 
 from .constants import *
+from .utils import dotdict
 
 DEPTH_SHAPE = (int(512), int(424), int(4))
 COLOR_SHAPE = (int(1920), int(1080))
 
 class Kinect():
-    def __init__(self, params_file=None, device_index=0, headless=False, pipeline=None):
+    def __init__(self, params=None, device_index=0, headless=False, pipeline=None):
         '''
             Kinect:  Kinect interface using the libfreenect library. Will query
                 libfreenect for available devices, if none are found will throw
@@ -27,13 +26,35 @@ class Kinect():
                 Use kinect.get_frame([<frame type>]) within a typical opencv 
                 capture loop to collect data from the kinect.
 
-                When instantiating, optionally pass a parameters file with 
-                the kinect's position and orientation in the worldspace and/or
-                the kinect's intrinsic parameters. See _load_camera_params for
-                formatting. 
+                When instantiating, optionally pass a parameters file or dict 
+                with the kinect's position and orientation in the worldspace 
+                and/or the kinect's intrinsic parameters. An example dictionary 
+                is shown below:
+
+                    kinect_params = {
+                        "position": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0.810,
+                            "roll": 0,
+                            "azimuth": 0,
+                            "elevation": -34
+                        }
+                        "intrinsic_parameters": {
+                            "cx": 256.684,
+                            "cy": 207.085,
+                            "fx": 366.193,
+                            "fy": 366.193
+                        }
+                    }
+                
+                These can also be adjusted using the intrinsic_parameters and 
+                position properties. 
+
             ARGUMENTS:
-                params_file: str
-                    Path to a kinect parameters file (.json).
+                params: str or dict
+                    Path to a kinect parameters file (.json) or a python dict
+                    with position or intrinsic_parameters.
                 device_index: int
                     Use to interface with a specific device if more than one is
                     connected. 
@@ -58,13 +79,15 @@ class Kinect():
         if (num_devices == 0):
             raise RuntimeError('No device connected!')
         if (device_index >= num_devices):
-            raise RuntimeError('Device index not available!')
+            raise RuntimeError('Device {} not available!'.format(device_index))
+        self._device_index = device_index
 
         # Import pipeline depending on headless state
+        self._headless = headless
         if (pipeline is None):
-            pipeline = self._import_pipeline(headless)
+            pipeline = self._import_pipeline(self._headless)
         print("Packet pipeline:", type(pipeline).__name__)
-        self.device = self.fn.openDevice(self.fn.getDeviceSerialNumber(device_index), 
+        self.device = self.fn.openDevice(self.fn.getDeviceSerialNumber(self._device_index), 
             pipeline=pipeline)
 
         # We want all the types
@@ -79,20 +102,70 @@ class Kinect():
         self.registration = Registration(self.device.getIrCameraParams(),
                                          self.device.getColorCameraParams())
    
+        self._camera_position = dotdict({
+            "x": 0.,
+            "y": 0.,
+            "z": 0.,
+            "roll": 0.,
+            "azimuth": 0.,
+            "elevation": 0.
+        })
+        self._camera_params = dotdict({
+            "cx":self.device.getIrCameraParams().cx,
+            "cy":self.device.getIrCameraParams().cy,
+            "fx":self.device.getIrCameraParams().fx,
+            "fy":self.device.getIrCameraParams().fy
+        })
+        
         # Try and load parameters
-        self._camera_position, self._camera_params = self._load_camera_params(params_file)
-        if (self._camera_params is None):
-            # Kinects's intrinsic parameters based on v2 hardware
-            self._camera_params = {
-                "cx":self.device.getIrCameraParams().cx,
-                "cy":self.device.getIrCameraParams().cy,
-                "fx":self.device.getIrCameraParams().fx,
-                "fy":self.device.getIrCameraParams().fy
-            }
+        pos, param = self._load_camera_params(params)
+        if (pos is not None):
+            self._camera_position.update(pos)
+        if (pos is not None):
+            self._camera_params.update(param)
 
     def __del__(self):
         self.device.stop()
 
+    def __repr__(self):
+        params = {"position": self._camera_position, 
+                  "intrinsic_parameters": self._camera_params}
+        # Can't really return the pipeline
+        return 'Kinect(' + str(params) + ',' + str(self._device_index) + \
+                ',' + str(self._headless) + ')'
+
+    @property
+    def position(self):
+        ''' 
+            Return the kinect's stored position. Elements can be referenced 
+                using setattr or setitem dunder methods. Can also be used to 
+                update the stored dictionary:
+                
+                    k = ktb.Kinect()
+                    k.position.x 
+                    >>> 2.0
+                    k.position.x = 1.0
+                    k.position.x 
+                    >>> 1.0
+        '''
+        return self._camera_position
+    
+    @property
+    def intrinsic_parameters(self):
+        ''' 
+            Return the kinect's stored position. Elements can be referenced 
+                using setattr or setitem dunder methods. Can also be used to 
+                update the stored dictionary:
+                
+                    k = ktb.Kinect()
+                    k.intrinsic_parameters.cx 
+                    >>> 2.0
+                    k.intrinsic_parameters.cx = 1.0
+                    k.intrinsic_parameters.cx 
+                    >>> 1.0
+        '''
+        return self._camera_params
+        
     @staticmethod
     def _import_pipeline(headless=False):
         '''
@@ -123,7 +196,7 @@ class Kinect():
                 shown below:
 
                     kinect_params = {
-                        "transform": {
+                        "position": {
                             "x": 0,
                             "y": 0,
                             "z": 0.810,
@@ -139,24 +212,27 @@ class Kinect():
                         }
                     }
 
-                Specifically, the dict may contain the "transform" or 
+                Specifically, the dict may contain the "position" or 
                 "intrinsic_parameters" keys, with the above fields.
             ARGUMENTS:
-                params_file: str
-                    Path to a kinect parameters file (.json). 
+                params_file: str or dict
+                    Path to a kinect parameters file (.json) or a python dict
+                    with position or intrinsic_parameters.
         '''
         if (params_file is None):
             return None, None
-        try:
-            with open(params_file, 'r') as infile:
-                params_dict = json.load(infile)
-        except FileNotFoundError:
-            print('Kienct configuration file {} not found'.format(params_file))
-            raise
+        elif isinstance(params_file, str):
+            try:
+                with open(params_file, 'r') as infile:
+                    params_dict = json.load(infile)
+            except FileNotFoundError:
+                print('Kienct configuration file {} not found'.format(params_file))
+                raise
+        else:
+            params_dict = params_file
 
         # If the keys do not exist, return None                                    
-        return params_dict.get('transform', None),
-               params_dict.get('intrinsic_parameters', None)
+        return params_dict.get('position', None), params_dict.get('intrinsic_parameters', None)
 
     def get_frame(self, frame_type=COLOR):
         '''
@@ -193,14 +269,14 @@ class Kinect():
             else:
                 raise RuntimeError('Unknown frame type {}'.format(ft))
 
-        # If just one frame type was passed
         frames = self.listener.waitForNewFrame()
-        if isinstance(frame_type, list):
+        # Multiple types were passed
+        if isinstance(frame_type, int):
+            return_frames = get_single_frame(frame_type)
+        else:
             return_frames = [None] * len(frame_type)
             for i, ft in enumerate(frame_type):
                 return_frames[i] = get_single_frame(ft)
-        else:
-            return_frames = get_single_frame(frame_type)
         self.listener.release(frames)
 
         return return_frames
@@ -263,149 +339,57 @@ class Kinect():
         
         return ptcld 
 
-    def get_perspective_depth(self, principal_point, view_vector, fov, roi=None, auto_adjust=False, blur_amnt=5):
+    @staticmethod
+    def _depthMatrixToPointCloudPos(z, camera_params, scale=1):
         '''
-            get_perspective_depth: Generates a simulated orthographic depth map 
-                from the input location and orientation and with the specified 
-                fov. The depth map is generated by tilting a point cloud so 
-                that the viewing vector is coincident with the z axis, 
-                identifying those points that are within the specified fov,
-                and filling in pixels of the depth map based on whether or not 
-                a point appears there. Then scipy.gridata fills in the holes, 
-                and the result is smoothed using a combination "average" and 
-                gaussian blur. 
-            ARGUMENTS:
-                principal_point: (x, y, z)
-                    Principal point of the virtual camera.
-                view_vector: (x, y, z)
-                    Signed normal vector of the virtual camera viewing plane.
-                fov: (x, y)
-                    Size of viewing plane (mm).
-                roi: [x, y, w, h]
-                    Optional, will crop the point cloud before rendering the 
-                    depth image.
-                auto_adjust: bool
-                    Optional, will change the principal point and fov to give 
-                    good view of the roi. 
-                blur_amnt: int
-                    How much blur to apply to the resulting depth map. Will 
-                    help fill in much of the blank space. 
+            Credit to: Logic1
+            https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
         '''
+        # bacically this is a vectorized version of depthToPointCloudPos()
+        # calculate the real-world xyz vertex coordinates from the raw depth data matrix.
+        C, R = np.indices(z.shape)
 
-        # View vector has to be normalized
-        view_vector = list(np.asarray(view_vector) / np.linalg.norm(np.asarray(view_vector)))
+        R = np.subtract(R, camera_params['cx'])
+        R = np.multiply(R, z)
+        R = np.divide(R, camera_params['fx'] * scale)
 
-        # Get the source point cloud
-        ptcld = self.get_ptcld(roi=roi)
-        ptcld_shape = ptcld.shape
+        C = np.subtract(C, camera_params['cy'])
+        C = np.multiply(C, z)
+        C = np.divide(C, camera_params['fy'] * scale)
 
-        # Auto adjust places the principal point 50 mm above the center of the point cloud. 
-        if (auto_adjust[0] and (roi is not None)):
-            def get_image_center_point(image, return_coords=False):
-                s = image.shape
-                r, c = int(s[0]/2), int(s[1]/2)
-                if return_coords:
-                    return image[r, c,...], (r,c)
-                return image[r, c,...]
-            principal_point = [(abs(vv) * 50) + cp for vv, cp in zip(view_vector, get_image_center_point(ptcld))]
+        return np.column_stack((z.ravel() / scale, R.ravel(), -C.ravel()))
 
-        # Extract size of resulting image
-        (yfov, xfov) = fov
-        ymin, ymax = -int(yfov/2), yfov - int(yfov/2)
-        xmin, xmax = -int(xfov/2), xfov - int(xfov/2)
-
-        # Vectorize point cloud
-        ptcld = ptcld.reshape(ptcld_shape[1] * ptcld_shape[0], 3)
-
-        # List of vectors from the principal point to each point in the cloud
-        vector_cloud = np.repeat(np.expand_dims(np.asarray(principal_point), axis=0), (ptcld_shape[1] * ptcld_shape[0]), axis=0)
-        vector_cloud = np.subtract(ptcld, vector_cloud)
-
-        # In order to get the vector projections in x and y, align the view vector (and points) with the z axis 
-        new_view_vector = [0, 0, -1]
-        d = np.dot(new_view_vector, view_vector)
-
-        # Sometimes the vectors are already aligned
-        if (d == -1):
-            valid_points = vector_cloud[:, 2] >= 0.0
-            rotm = np.identity(3)
-        elif (d == 1):
-            valid_points = vector_cloud[:, 2] <= 0.0
-            rotm = np.identity(3)
-        else:
-            # Sometimes they aren't and we need to rotate all the points
-            angle = math.acos(np.dot(view_vector, new_view_vector))
-            axis = np.cross(view_vector, new_view_vector)
-            q = Quaternion(axis=axis, angle=angle)
-            rotm = q.rotation_matrix
-            vector_cloud = np.transpose(np.matmul(np.array(rotm), np.transpose(vector_cloud)))
-            valid_points = vector_cloud[:, 2] <= 0.0
-        # Discard points on the wrong side of the camera
-        vector_cloud = vector_cloud[valid_points, :]
-
-        # This will resize the fov, if desired
-        if (auto_adjust[1] and (roi is not None)):
-            min_pt = principal_point + vector_cloud[0,:]
-            (yfov, xfov) = int(2*abs(principal_point[0] - min_pt[0])), int(2*abs(principal_point[1] - min_pt[1]))
-            fov = [yfov, xfov]
-            ymin, ymax = -int(yfov/2), yfov - int(yfov/2)
-            xmin, xmax = -int(xfov/2), xfov - int(xfov/2)
-
-        # Did this get rid of all the points?
-        if (vector_cloud.shape[0] == 0):
-            return np.matrix(np.zeros((fov))), np.linalg.inv(rotm), principal_point
-
-        # Get the corresponding vector distances
-        vector_dists = np.apply_along_axis(lambda v: math.sqrt(np.dot(v, v)), 1, vector_cloud)
-
-        # Create the image
-        points = np.zeros((yfov*xfov,2))
-        values = np.zeros((yfov*xfov,1))
-        for i, v in enumerate(vector_cloud):
-            [y, x] = [int(-q) for q in v[:-1]]
-            if (x >= xmin) and (x < xmax) and (y >= ymin) and (y < ymax):
-                [y, x] = (y) - ymin,  (x) - xmin
-
-                pt_idx = np.ravel_multi_index((y, x), fov)
-                points[pt_idx, :] = [int(y), int(x)]
-                if (values[pt_idx, :] > 0):
-                    values[pt_idx, :] = min(vector_dists[i], values[pt_idx, :])
-                else:
-                    values[pt_idx, :] = vector_dists[i]
-        points = points[values[:,0] > 0.0, :]
-        values = values[values[:,0] > 0.0, :]
-
-        if (points.shape[0] == 0):
-            return np.matrix(np.zeros((fov))), np.linalg.inv(rotm), principal_point
-    
-        # Fill in the holes
-        grid_y, grid_x  = np.mgrid[0:xfov, 0:yfov]
-        grid = griddata(points, values, (grid_x, grid_y), method='nearest', fill_value=np.max(values))
-        grid = np.reshape(np.nan_to_num(grid.T), (xfov, yfov, 1))
-
-        # Apply a blur to simulate a depth map
-        if (blur_amnt > 1):
-            grid = cv2.blur(grid, (blur_amnt, blur_amnt))
-            grid = cv2.GaussianBlur(grid, (blur_amnt, blur_amnt),0)
-        
-        return grid, np.linalg.inv(rotm), principal_point
-
-    def get_roi(self, frame_type=None):
+    @staticmethod
+    def _applyCameraMatrixOrientation(pt, camera_position=None):
         '''
-            get_roi: Simply, this functions as a wrapper for the opencv method
-                selectROI. When called, collects a new frame of the type
-                specified, opens a cv2 window and allows the user to select a
-                region.
-            ARGUMENTS:
-                frame_type: frame type
-                    A single frame type.
+            Credit to: Logic1
+            https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
         '''
-        frame = self.get_frame(frame_type)
-        [x, y, w, h] = cv2.selectROI('roi window', frame, True, False)
-        cv2.destroyWindow('roi window')
-        return frame[x:x+w, y:y+h], [x, y, w, h]
+        # Kinect Sensor Orientation Compensation
+        # bacically this is a vectorized version of applyCameraOrientation()
+        # uses same trig to rotate a vertex around a gimbal.
+        def rotatePoints(ax1, ax2, deg):
+            # math to rotate vertexes around a center point on a plane.
+            hyp = np.sqrt(pt[:, ax1] ** 2 + pt[:, ax2] ** 2) # Get the length of the hypotenuse of the real-world coordinate from center of rotation, this is the radius!
+            d_tan = np.arctan2(pt[:, ax2], pt[:, ax1]) # Calculate the vertexes current angle (returns radians that go from -180 to 180)
 
-    def record(self, frame_type=COLOR, video_codec='XVID', filename=None):
+            cur_angle = np.degrees(d_tan) % 360 # Convert radians to degrees and use modulo to adjust range from 0 to 360.
+            new_angle = np.radians((cur_angle + deg) % 360) # The new angle (in radians) of the vertexes after being rotated by the value of deg.
+
+            pt[:, ax1] = hyp * np.cos(new_angle) # Calculate the rotated coordinate for this axis.
+            pt[:, ax2] = hyp * np.sin(new_angle) # Calculate the rotated coordinate for this axis.
+
+        if (camera_position is not None):
+            rotatePoints(1, 2, camera_position['roll']) #rotate on the Y&Z plane # Usually disabled because most tripods don't roll. If an Inertial Nav Unit is available this could be used)
+            rotatePoints(0, 2, camera_position['elevation']) #rotate on the X&Z plane
+            rotatePoints(0, 1, camera_position['azimuth']) #rotate on the X&Y
+
+            # Apply offsets for height and linear position of the sensor (from viewport's center)
+            pt[:] += np.float_([camera_position['x'], camera_position['y'], camera_position['z']])
+
+        return pt
+
+    def record(self, filename, frame_type=COLOR, video_codec='XVID'):
         '''
             record: Records a video of the type specified. If no filename is 
                 given, records as a .avi. Do not call this in conjunction with
@@ -413,12 +397,11 @@ class Kinect():
             ARGUMENTS:
                 filename: (str)
                     Name to save the video with. 
+                frame_type: frame type
+                    What channel to record (only one type).
+                video_codec: (str)
+                    cv2 video codec.
         '''
-        from datetime import datetime
-
-        # Create the filename 
-        if (filename is None):
-            filename = 'kinect_{}.avi'.format(datetime.now().strftime("%m_%d_%Y_%H_%M_%S"))
 
         # Create the video writer
         if (frame_type == RAW_COLOR):
@@ -434,10 +417,11 @@ class Kinect():
                 frame = self.get_frame(frame_type=frame_type)
                 if (frame_type == RAW_COLOR):
                     frame = frame[:,:,:3]                
-                cv2.imshow("KinectVideo", frame)
                 out.write(frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+                if (not self._headless):
+                    cv2.imshow("KinectVideo", frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
             out.release()
             cv2.destroyAllWindows()
         except KeyboardInterrupt:
@@ -489,53 +473,3 @@ class Kinect():
         undistorted = np.copy(undistorted.asarray(np.float32))
         registered = np.copy(registered.asarray(np.uint8))[...,:3]
         return registered, undistorted
-
-    @staticmethod
-    def _depthMatrixToPointCloudPos(z, camera_params, scale=1):
-        '''
-            Credit to: Logic1
-            https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
-        '''
-        # bacically this is a vectorized version of depthToPointCloudPos()
-        # calculate the real-world xyz vertex coordinates from the raw depth data matrix.
-        C, R = np.indices(z.shape)
-
-        R = np.subtract(R, camera_params['cx'])
-        R = np.multiply(R, z)
-        R = np.divide(R, camera_params['fx'] * scale)
-
-        C = np.subtract(C, camera_params['cy'])
-        C = np.multiply(C, z)
-        C = np.divide(C, camera_params['fy'] * scale)
-
-        return np.column_stack((z.ravel() / scale, R.ravel(), -C.ravel()))
-
-    @staticmethod
-    def _applyCameraMatrixOrientation(pt, camera_position=None):
-        '''
-            Credit to: Logic1
-            https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed
-        '''
-        # Kinect Sensor Orientation Compensation
-        # bacically this is a vectorized version of applyCameraOrientation()
-        # uses same trig to rotate a vertex around a gimbal.
-        def rotatePoints(ax1, ax2, deg):
-            # math to rotate vertexes around a center point on a plane.
-            hyp = np.sqrt(pt[:, ax1] ** 2 + pt[:, ax2] ** 2) # Get the length of the hypotenuse of the real-world coordinate from center of rotation, this is the radius!
-            d_tan = np.arctan2(pt[:, ax2], pt[:, ax1]) # Calculate the vertexes current angle (returns radians that go from -180 to 180)
-
-            cur_angle = np.degrees(d_tan) % 360 # Convert radians to degrees and use modulo to adjust range from 0 to 360.
-            new_angle = np.radians((cur_angle + deg) % 360) # The new angle (in radians) of the vertexes after being rotated by the value of deg.
-
-            pt[:, ax1] = hyp * np.cos(new_angle) # Calculate the rotated coordinate for this axis.
-            pt[:, ax2] = hyp * np.sin(new_angle) # Calculate the rotated coordinate for this axis.
-
-        if (camera_position is not None):
-            rotatePoints(1, 2, camera_position['roll']) #rotate on the Y&Z plane # Usually disabled because most tripods don't roll. If an Inertial Nav Unit is available this could be used)
-            rotatePoints(0, 2, camera_position['elevation']) #rotate on the X&Z plane
-            rotatePoints(0, 1, camera_position['azimuth']) #rotate on the X&Y
-
-            # Apply offsets for height and linear position of the sensor (from viewport's center)
-            pt[:] += np.float_([camera_position['x'], camera_position['y'], camera_position['z']])
-
-        return pt
