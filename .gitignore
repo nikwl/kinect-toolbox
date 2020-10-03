@@ -1,4 +1,6 @@
+# Pycache
 *.pyc
+*/__pycache__
 
 # Environment files
 /env

@@ -7,7 +7,7 @@ with open('requirements.txt') as f:
     requirements = f.read().splitlines()
 
 setuptools.setup(
-    name="ktb-nikwl", # Replace with your own username
+    name="ktb", # Replace with your own username
     version="0.0.1",
     author="Nikolas lamb",
     author_email="nil518@lehigh.edu",
