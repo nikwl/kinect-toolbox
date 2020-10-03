@@ -3,3 +3,11 @@
 # Environment files
 /env
 /venv
+
+# Package files 
+/build
+/dist
+/ktb_nikwl.egg-info
+
+# Testing 
+/test

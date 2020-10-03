@@ -1,6 +1,6 @@
 # kinect-toolbox
 ## Overview
-This is a set of helper functions that I wrote to make using the Microsoft Kinect V2 with python easier. In my opinion the "C++ like" terminology of the pylibfreenect2 library is cumbersome and difficult. With this wrapper the kinect can be used more like a cv2 webcam. Provides methods to get color, depth, registered color, registered depth, and ir images, record video, get point clouds (quickly), create synthetic depth images, and select and return a region of interest. 
+This is a set of helper functions to make using the Microsoft Kinect V2 with python easier. Libfreenect2 provides a robust interface for the kinect but it follows a more "C++ like" design paradigm. With this wrapper the kinect can be used more like a cv2 webcam. This package provides methods to get color, depth, registered color, registered depth, and ir images, record video, get point clouds (quickly), and makes the kinect interface all around more pythonic.
 
 Credit for point cloud acceleration methods goes to stackoverflow user [Logic1](https://stackoverflow.com/questions/41241236/vectorizing-the-kinect-real-world-coordinate-processing-algorithm-for-speed).
 
