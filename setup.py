@@ -10,7 +10,7 @@ setuptools.setup(
     name="ktb", # Replace with your own username
     version="0.0.1",
     author="Nikolas lamb",
-    author_email="nil518@lehigh.edu",
+    author_email="nikolas.lamb@gmail.com",
     description="A python wrapper for the kinect built on pylibfreenect2",
     long_description=long_description,
     long_description_content_type="text/markdown",
